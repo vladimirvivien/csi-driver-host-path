@@ -32,6 +32,7 @@ var (
 	endpoint   = flag.String("endpoint", "unix://tmp/csi.sock", "CSI endpoint")
 	driverName = flag.String("drivername", "csi-hostpath", "name of the driver")
 	nodeID     = flag.String("nodeid", "", "node id")
+	ephemeral  = flag.Bool("ephemeral", false, "deploy in ephemeral mode")
 )
 
 func main() {
@@ -42,7 +43,7 @@ func main() {
 }
 
 func handle() {
-	driver, err := hostpath.NewHostPathDriver(*driverName, *nodeID, *endpoint)
+	driver, err := hostpath.NewHostPathDriver(*driverName, *nodeID, *endpoint, *ephemeral)
 	if err != nil {
 		fmt.Printf("Failed to initialize driver: %s", err.Error())
 		os.Exit(1)
