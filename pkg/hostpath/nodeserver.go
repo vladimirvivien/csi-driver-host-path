@@ -17,7 +17,9 @@ limitations under the License.
 package hostpath
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
@@ -90,19 +92,25 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		options = append(options, "ro")
 	}
 	mounter := mount.New("")
-	path := provisionRoot + volumeId
-	newEphemeral := false
+
+	path := getVolumePath(volumeId)
 	if ns.ephemeral {
-		if err = os.MkdirAll(path, 0777); err != nil && !os.IsNotExist(err) {
+		volPath, err := createVolumeDir(volumeId)
+		if err != nil && !os.IsExist(err) {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
-		newEphemeral = true
+		glog.V(4).Infof("ephemeral mode: created volume: %s", volPath)
 	}
+
 	if err := mounter.Mount(path, targetPath, "", options); err != nil {
-		if newEphemeral {
-			os.RemoveAll(path)
+		var errList strings.Builder
+		errList.WriteString(err.Error())
+		if ns.ephemeral {
+			if rmErr := os.RemoveAll(path); rmErr != nil && !os.IsNotExist(rmErr) {
+				errList.WriteString(fmt.Sprintf(" :%s", rmErr.Error()))
+			}
 		}
-		return nil, err
+		return nil, status.Error(codes.Internal, errList.String())
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -129,8 +137,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	if ns.ephemeral {
 		glog.V(4).Infof("deleting volume %s", volumeID)
-		path := provisionRoot + volumeID
-		os.RemoveAll(path)
+		deleteVolumeDir(volumeID)
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
