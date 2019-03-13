@@ -18,6 +18,7 @@ package hostpath
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/golang/glog"
 
@@ -31,6 +32,10 @@ const (
 	gib100 int64 = gib * 100
 	tib    int64 = gib * 1024
 	tib100 int64 = tib * 100
+)
+
+const (
+	volumeRoot = "/tmp"
 )
 
 type hostPath struct {
@@ -102,13 +107,10 @@ func NewHostPathDriver(driverName, nodeID, endpoint string, ephemeral bool) (*ho
 func (hp *hostPath) Run() {
 	s := NewNonBlockingGRPCServer()
 
-	hp.ids = nil
-	hp.cs = nil
+	hp.ids = NewIdentityServer(hp.name, hp.version)
 	hp.ns = NewNodeServer(hp.nodeID, hp.ephemeral)
-	if !hp.ephemeral {
-		hp.ids = NewIdentityServer(hp.name, hp.version)
-		hp.cs = NewControllerServer()
-	}
+	hp.cs = NewControllerServer(hp.ephemeral)
+
 	s.Start(hp.endpoint, hp.ids, hp.cs, hp.ns)
 	s.Wait()
 }
@@ -136,4 +138,30 @@ func getSnapshotByName(name string) (hostPathSnapshot, error) {
 		}
 	}
 	return hostPathSnapshot{}, fmt.Errorf("snapshot name %s does not exit in the snapshots list", name)
+}
+
+// getVolumePath returs the canonical path for hostpath volume
+func getVolumePath(volID string) string {
+	return fmt.Sprintf("%s/%s", volumeRoot, volID)
+}
+
+// createVolume create the directory for the hostpath volume.
+// It returns the volume path or err if one occurs.
+func createVolumeDir(volID string) (string, error) {
+	path := getVolumePath(volID)
+	err := os.MkdirAll(path, 0777)
+	if err != nil {
+		return "", err
+	}
+
+	return path, nil
+}
+
+// deleteVolume deletes the directory for the hostpath volume.
+func deleteVolumeDir(volID string) error {
+	path := getVolumePath(volID)
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return nil
 }

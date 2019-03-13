@@ -37,7 +37,6 @@ import (
 
 const (
 	deviceID           = "deviceID"
-	provisionRoot      = "/tmp/"
 	snapshotRoot       = "/tmp/"
 	maxStorageCapacity = tib
 )
@@ -46,7 +45,10 @@ type controllerServer struct {
 	caps []*csi.ControllerServiceCapability
 }
 
-func NewControllerServer() *controllerServer {
+func NewControllerServer(ephemeral bool) *controllerServer {
+	if ephemeral {
+		return &controllerServer{caps: getControllerServiceCapabilities(nil)}
+	}
 	return &controllerServer{
 		caps: getControllerServiceCapabilities(
 			[]csi.ControllerServiceCapability_RPC_Type{
@@ -95,8 +97,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity)
 	}
 	volumeID := uuid.NewUUID().String()
-	path := provisionRoot + volumeID
-	err := os.MkdirAll(path, 0777)
+	path, err := createVolumeDir(volumeID)
 	if err != nil {
 		glog.V(3).Infof("failed to create volume: %v", err)
 		return nil, err
@@ -150,8 +151,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	}
 	volumeID := req.VolumeId
 	glog.V(4).Infof("deleting volume %s", volumeID)
-	path := provisionRoot + volumeID
-	os.RemoveAll(path)
+	deleteVolumeDir(volumeID)
 	delete(hostPathVolumes, volumeID)
 	return &csi.DeleteVolumeResponse{}, nil
 }
