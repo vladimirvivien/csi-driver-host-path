@@ -54,7 +54,10 @@ type controllerServer struct {
 	caps []*csi.ControllerServiceCapability
 }
 
-func NewControllerServer() *controllerServer {
+func NewControllerServer(ephemeral bool) *controllerServer {
+	if ephemeral {
+		return &controllerServer{caps: getControllerServiceCapabilities(nil)}
+	}
 	return &controllerServer{
 		caps: getControllerServiceCapabilities(
 			[]csi.ControllerServiceCapability_RPC_Type{
@@ -136,7 +139,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 
 	volumeID := uuid.NewUUID().String()
-	path := provisionRoot + volumeID
+	path := getVolumePath(volumeID)
 
 	switch requestedAccessType {
 	case blockAccess:

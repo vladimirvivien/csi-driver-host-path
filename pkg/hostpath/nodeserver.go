@@ -19,6 +19,7 @@ package hostpath
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
@@ -31,12 +32,14 @@ import (
 )
 
 type nodeServer struct {
-	nodeID string
+	nodeID    string
+	ephemeral bool
 }
 
-func NewNodeServer(nodeId string) *nodeServer {
+func NewNodeServer(nodeId string, ephemeral bool) *nodeServer {
 	return &nodeServer{
-		nodeID: nodeId,
+		nodeID:    nodeId,
+		ephemeral: ephemeral,
 	}
 }
 
@@ -151,8 +154,22 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		}
 		mounter := mount.New("")
 		path := provisionRoot + volumeId
+		if ns.ephemeral {
+			volPath, err := createVolumeDir(volumeId)
+			if err != nil && !os.IsExist(err) {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+			glog.V(4).Infof("ephemeral mode: created volume: %s", volPath)
+		}
+
 		if err := mounter.Mount(path, targetPath, "", options); err != nil {
-			return nil, err
+			var errList strings.Builder
+			errList.WriteString(err.Error())
+			if ns.ephemeral {
+				if rmErr := os.RemoveAll(path); rmErr != nil && !os.IsNotExist(rmErr) {
+					errList.WriteString(fmt.Sprintf(" :%s", rmErr.Error()))
+				}
+			}
 		}
 	}
 
@@ -194,6 +211,11 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		glog.V(4).Infof("hostpath: volume %s/%s has been unmounted.", targetPath, volumeID)
+	}
+
+	if ns.ephemeral {
+		glog.V(4).Infof("deleting volume %s", volumeID)
+		deleteVolumeDir(volumeID)
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
