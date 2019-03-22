@@ -113,6 +113,12 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		requestedAccessType = mountAccess
 	}
 
+	// Check for maximum available capacity
+	capacity := int64(req.GetCapacityRange().GetRequiredBytes())
+	if capacity >= maxStorageCapacity {
+		return nil, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity)
+	}
+
 	// Need to check for already existing volume name, and if found
 	// check for the requested capacity and already allocated capacity
 	if exVol, err := getVolumeByName(req.GetName()); err == nil {
@@ -131,11 +137,6 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			}, nil
 		}
 		return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("Volume with the same name: %s but with different size already exist", req.GetName()))
-	}
-	// Check for maximum available capacity
-	capacity := int64(req.GetCapacityRange().GetRequiredBytes())
-	if capacity >= maxStorageCapacity {
-		return nil, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity)
 	}
 
 	volumeID := uuid.NewUUID().String()
@@ -164,11 +165,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to attach device: %v", err))
 		}
 	case mountAccess:
-		err := os.MkdirAll(path, 0777)
+		vol, err := createHospathVolume(volumeID, req.GetName(), capacity, requestedAccessType)
 		if err != nil {
-			glog.V(3).Infof("failed to create volume: %v", err)
-			return nil, err
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to create volume: %s", err))
 		}
+		glog.V(4).Infof("created volume %s at path %s", vol.VolID, vol.VolPath)
 	}
 
 	if req.GetVolumeContentSource() != nil {
@@ -191,14 +192,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			}
 		}
 	}
-	glog.V(4).Infof("create volume %s", path)
-	hostPathVol := hostPathVolume{}
-	hostPathVol.VolName = req.GetName()
-	hostPathVol.VolID = volumeID
-	hostPathVol.VolSize = capacity
-	hostPathVol.VolPath = path
-	hostPathVol.VolAccessType = requestedAccessType
-	hostPathVolumes[volumeID] = hostPathVol
+
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      volumeID,
@@ -231,7 +225,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 
 		volPathHandler := volumepathhandler.VolumePathHandler{}
 		// Get the associated loop device.
-		device, err := volPathHandler.GetLoopDevice(provisionRoot + vol.VolID)
+		device, err := volPathHandler.GetLoopDevice(getVolumePath(vol.VolID))
 		if err != nil {
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to get the loop device: %v", err))
 		}
@@ -245,8 +239,12 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		}
 	}
 
-	os.RemoveAll(vol.VolPath)
-	delete(hostPathVolumes, vol.VolID)
+	if err := deleteHostpathVolume(vol.VolID); err != nil && !os.IsNotExist(err) {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to delete volume: %s", err))
+	}
+
+	glog.V(4).Infof("volume deleted ok: %s", vol.VolID)
+
 	return &csi.DeleteVolumeResponse{}, nil
 }
 

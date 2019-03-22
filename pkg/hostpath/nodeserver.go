@@ -63,6 +63,18 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return nil, status.Error(codes.InvalidArgument, "cannot have both block and mount access type")
 	}
 
+	// if ephemeral is specified, create volume here to avoid errors
+	if ns.ephemeral {
+		volID := req.GetVolumeId()
+		volName := fmt.Sprintf("ephemeral-%s", volID)
+		vol, err := createHospathVolume(req.GetVolumeId(), volName, maxStorageCapacity, mountAccess)
+		if err != nil && !os.IsExist(err) {
+			glog.Error("ephemeral mode failed to create volume: ", err)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		glog.V(4).Infof("ephemeral mode: created volume: %s", vol.VolPath)
+	}
+
 	vol, err := getVolumeByID(req.GetVolumeId())
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -153,14 +165,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			options = append(options, "ro")
 		}
 		mounter := mount.New("")
-		path := provisionRoot + volumeId
-		if ns.ephemeral {
-			volPath, err := createVolumeDir(volumeId)
-			if err != nil && !os.IsExist(err) {
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-			glog.V(4).Infof("ephemeral mode: created volume: %s", volPath)
-		}
+		path := getVolumePath(volumeId)
 
 		if err := mounter.Mount(path, targetPath, "", options); err != nil {
 			var errList strings.Builder
@@ -215,7 +220,9 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	if ns.ephemeral {
 		glog.V(4).Infof("deleting volume %s", volumeID)
-		deleteVolumeDir(volumeID)
+		if err := deleteHostpathVolume(volumeID); err != nil && !os.IsNotExist(err) {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to delete volume: %s", err))
+		}
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil

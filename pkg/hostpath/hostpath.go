@@ -144,21 +144,30 @@ func getVolumePath(volID string) string {
 
 // createVolume create the directory for the hostpath volume.
 // It returns the volume path or err if one occurs.
-func createVolumeDir(volID string) (string, error) {
+func createHospathVolume(volID, name string, cap int64, volAccessType accessType) (*hostPathVolume, error) {
 	path := getVolumePath(volID)
 	err := os.MkdirAll(path, 0777)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return path, nil
+	hostpathVol := hostPathVolume{
+		VolID:         volID,
+		VolName:       name,
+		VolSize:       cap,
+		VolPath:       path,
+		VolAccessType: volAccessType,
+	}
+	hostPathVolumes[volID] = hostpathVol
+	return &hostpathVol, nil
 }
 
 // deleteVolume deletes the directory for the hostpath volume.
-func deleteVolumeDir(volID string) error {
+func deleteHostpathVolume(volID string) error {
 	path := getVolumePath(volID)
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}
+	delete(hostPathVolumes, volID)
 	return nil
 }
